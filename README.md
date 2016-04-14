@@ -17,18 +17,18 @@ WARNING: I haven't tested these commands on Windows or Mac. What it says below i
 
 
 # Prerequisites
-Linux -
-Debian and derivatives (like Ubuntu): sudo apt-get install php-cli
-Other distros: Check your package manager for php-cli, and failing that, php.
+Linux:
+- Debian and derivatives (like Ubuntu): sudo apt-get install php-cli
+- Other distros: Check your package manager for php-cli, and failing that, php.
 
-Windows -
-php.net has instructions: http://php.net/manual/en/install.windows.commandline.php
+Windows:
+- php.net has instructions: http://php.net/manual/en/install.windows.commandline.php
 
-Mac -
-PHP has been bundled with Mac OS X since version 10.0.0 (i.e., forever).
-php.net has more info: http://php.net/manual/en/install.macosx.bundled.php
+Mac:
+- PHP has been bundled with Mac OS X since version 10.0.0 (i.e., forever).<br>
+- php.net has more info: http://php.net/manual/en/install.macosx.bundled.php
 
-If using Linux or Mac, you can do this to make the script execute by itself:
+If using Linux or Mac, you can do this to make the script execute by itself:<br>
 chmod a+x KISSCoast.php
 
 
@@ -37,10 +37,9 @@ chmod a+x KISSCoast.php
 In KISSlicer, go to Printer -> Firmware and enter the correct line for your OS. Replace x.xx and y.yy with the values you want.
 
 Linux / Mac:
-"/path/to/KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite
-If there are any spaces in the path to KISSCoast.php, 
+"/path/to/KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite<br>
 
 Windows:
-"C:\path\to\PHP\php" -q "C:\path\to\KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite
+"C:\path\to\PHP\php" -q "C:\path\to\KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite<br>
 
 You can also run the script directly from a shell or command prompt. Just replace <FILE> with the path to a G-code file you want to test with. You can use test.gcode (included) if you like. If you want to see the script spew a bunch of debug info, put --verbose at the end of the command line. If you don't want it to overwrite your input g-code, so that (for example) you can compare the input and output, don't use --overwrite.
