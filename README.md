@@ -37,9 +37,9 @@ chmod a+x KISSCoast.php
 In KISSlicer, go to Printer -> Firmware and enter the correct line for your OS. Replace x.xx and y.yy with the values you want.
 
 Linux / Mac:
-```"/path/to/KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite<br>```
+```"/path/to/KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite```
 
 Windows:
-``"C:\path\to\PHP\php" -q "C:\path\to\KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite<br>```
+``"C:\path\to\PHP\php" -q "C:\path\to\KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite```
 
 You can also run the script directly from a shell or command prompt. Just replace <FILE> with the path to a G-code file you want to test with. You can use test.gcode (included) if you like. If you want to see the script spew a bunch of debug info, put --verbose at the end of the command line. If you don't want it to overwrite your input g-code, so that (for example) you can compare the input and output, don't use --overwrite.
