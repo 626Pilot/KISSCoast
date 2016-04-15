@@ -1,10 +1,7 @@
 # !!! WARNING !!!
-This is alpha-quality software. It may:
-- Not work
-- Make your printer smash itself to pieces
-- Cause things to catch on fire, or worse
+This is alpha-quality software. I've been testing it for awhile, and I THINK it should work on any file you give it, but I can't guarantee that. It would be a good idea for you to sit near your printer while it's printing.
 
-While I don't think it's particularly dangerous, it is largely untested. Use at your own risk, and NEVER leave a print unattended. You need to be there to hit the power/kill switch in case anything goes wrong.
+This program is SLOW. It will take awhile on large G-code files. If you want to help test, it's better if you use it on small calibration files. I'm looking into multi-threading it so it works faster.
 
 
 # KISSCoast
