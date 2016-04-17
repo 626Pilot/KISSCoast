@@ -1,3 +1,12 @@
+; Coasting implemented by KISSCoast.php
+; -------------------------------------------------------------------------------
+;           Author: 626Pilot (find me on the SeeMeCNC forums)
+;           Source: https://github.com/626Pilot/KISSCoast
+;        Timestamp: 2016-04-14 02:49:35
+;            coast: 4
+; primePillarCoast: 9
+; -------------------------------------------------------------------------------
+;
 ; [mm] mode
 G21
 G90 ; Smoothie: Absolute units 
@@ -38,8 +47,9 @@ G1 X25 Y0 E5
 G1 X30 Y0 E6
 G1 X35 Y0 E7
 G1 X40 Y0 E8
-G1 X45 Y0 E9
-G1 X50 Y0 E10
+G1 X41 Y0 E8.2
+G1 X45 Y0
+G1 X50 Y0
 ;
 ; 'Destring/Wipe/Jump Path', 0.0 [feed mm/s], 20.0 [head mm/s]
 G1 E1.5506 F900
@@ -49,18 +59,15 @@ G1 X45 Y45
 ; 'Perimeter Path', 0.6 [feed mm/s], 20.0 [head mm/s]
 G1 X0 Y0 E0 F9000
 G1 E2.0 F1200
-G1 X5 Y5 E1 F1200
-G1 X10 Y10 E2 F1200
-G1 X15 Y15 E3 F1200
-G1 X20 Y20 E4 F1200
-G1 X25 Y25 E5 F1200
+G1 X0 Y5 E1 F1200
+G1 X5 Y5 E2 F1200
+G1 X5 Y0 E3 F1200
+G1 X4 Y0 E3.2 F1200
+G1 X0 Y0 F1200
 ;
 ; 'Destring/Wipe/Jump Path', 0.0 [feed mm/s], 20.0 [head mm/s]
 G1 E3 F900
-G1 X20 Y20 F1200
-G1 X-5.79 Y-26.42
-G1 X-3.93 Y-27.08
-G1 X-2.04 Y-27.48
-G1 X0 Y-27.63
-G1 X1.99 Y-27.49
-G1 X3.58 Y-27.16
+G1 X5 Y0 F1200
+G1 X5 Y5
+G1 X0 Y5
+G1 X0 Y0
