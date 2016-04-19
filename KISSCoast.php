@@ -18,6 +18,7 @@ function displayHelp() {
          "       [--verbose] [--backup] [--overwrite] [--processes=x]\n" .
          "       coast              How many units (mm) before destring to stop extruding\n" .
          "       primePillarCoast   How much to extrude on the prime pillar (1.0 = slicer default)\n" .
+         "       minExtrusionLength Minimum extrusion length (shrink/cancel coasting if too short)\n" .
          "       file               Name of G-code file\n" .
          "       verbose            Whether to spew a load of debugging info\n" .
          "       backup             Whether to save a backup as filename.gcode_backup\n" .
@@ -27,15 +28,19 @@ function displayHelp() {
          "Process worker options (only developers have to care about these):\n" .
          "       processID          Process ID (only if this is a spawned process)\n" .
          "       processMasterID    Master process's UUID (only if this is a spawned process)\n" .
+         "       keepWorkDir        Don't delete intermediate work files after completion\n" .
          "\n";
 
 }
 
 // Spew debug output if requested
-function debug($str) {
+function debug($str="", $newline=true) {
     global $verbose;
     if($verbose) {
         echo $str;
+        if($newline) {
+            echo "\n";
+        }
     }
 }
 
@@ -48,7 +53,8 @@ function gcodeToXYZEF($gcode) {
         'y' => null,
         'z' => null,
         'e' => null,
-        'f' => null
+        'f' => null,
+        'motion' => false
     );
     $line = split(" ", $gcode);
     $isG1 = false;
@@ -61,32 +67,26 @@ function gcodeToXYZEF($gcode) {
         if($isG1) {
             if(substr($token, 0, 1) == 'X') {
                 $out['x'] = floatval(substr($token, 1));
-                $varSet = true;
+                $out['motion'] = true;
             }
             if(substr($token, 0, 1) == 'Y') {
                 $out['y'] = floatval(substr($token, 1));
-                $varSet = true;
+                $out['motion'] = true;
             }
             if(substr($token, 0, 1) == 'Z') {
                 $out['z'] = floatval(substr($token, 1));
-                $varSet = true;
+                $out['motion'] = true;
             }
             if(substr($token, 0, 1) == 'E') {
                 $out['e'] = floatval(substr($token, 1));
-                // We don't set $varSet here because we don't care about lines without XYZ moves.
             }
             if(substr($token, 0, 1) == 'F') {
                 $out['f'] = floatval(substr($token, 1));
-                // Ditto.
             }
         }
     }
 
-    if($varSet == false) {
-        return false;
-    } else {
-      return $out;
-    }
+    return $out;
 
 }
 
@@ -121,33 +121,41 @@ $triggers = array(
 $longopts  = array(
     'coast:',										// How many units (mm) before destring to stop extruding
     'primePillarCoast:',							// How much to extrude on the prime pillar (1.0 = slicer default)
+    'minExtrusionLength:',							// Minimum extrusion length (shrink/cancel coasting if too short)
     'file:',										// Name of G-code file, which will be overwritten
     'verbose',										// Whether to spew a load of debugging info
     'backup',										// Whether to save a backup as filename.gcode_backup
     'overwrite',									// Whether to overwrite the file, or save as filename.gcode_out
     'processes:',									// How many processes to spawn
     'processID:',									// Process ID (only if this is a spawned process)
-    'processMasterID:'								// Master process's UUID (only if this is a spawned process)
+    'processMasterID:',								// Master process's UUID (only if this is a spawned process)
+    'keepWorkDir'									// Don't delete intermediate work files after completion
 );
 $options = getopt("", $longopts);
 
 // Sanity check
-if(@ !is_numeric($options['primePillarCoast']) || @ $options['primePillarCoast'] < 0 || @ $options['primePillarCoast'] > 50) {
-    echo "ERROR: primePillarCoast must be a number between 0 and 50.\n";
+if(@ !is_numeric($options['primePillarCoast']) || @ $options['primePillarCoast'] < 0 || @ $options['primePillarCoast'] > 100) {
+    echo "ERROR: primePillarCoast must be a number between 0 and 100.\n";
     displayHelp();
     exit(1);
 }
 
-if(@ !is_numeric($options['coast']) || @ $options['coast'] < 0 || @ $options['coast'] > 50) {
-    echo "ERROR: coast must be a number between 0 and 50.\n";
+if(@ !is_numeric($options['coast']) || @ $options['coast'] < 0 || @ $options['coast'] > 100) {
+    echo "ERROR: coast must be a number between 0 and 100.\n";
     displayHelp();
     exit(2);
+}
+
+if(@ !is_numeric($options['minExtrusionLength']) || $options['minExtrusionLength'] < 0) {
+    echo "ERROR: minExtrusionLength must be a number greater than zero.\n";
+    displayHelp();
+    exit(3);
 }
 
 if(@ !file_exists($options['file']) && $options['processMasterID'] == null) {
     echo "ERROR: File '${options['file']}' doesn't exist.\n";
     displayHelp();
-    exit(3);
+    exit(4);
 }
 
 // Verbose output?
@@ -155,13 +163,20 @@ global $verbose;
 $verbose = false;
 if(array_key_exists("verbose", $options)) {
     $verbose = true;
-    debug("Verbose output on.\n");
+    debug("Verbose output on.");
 }
 
 // Make backup file?
 if(array_key_exists("backup", $options)) {
     copy($options['file'], $options['file'] . "_backup");
-    debug("Backup file created: " . $options['file'] . "_backup\n");
+    debug("Backup file created: " . $options['file'] . "_backup");
+}
+
+// Keep work files?
+$keepWorkDir = false;
+if(array_key_exists("keepWorkDir", $options)) {
+    debug("Will keep work directory & files after completion.");
+    $keepWorkDir = true;
 }
 
 // Handle multiprocessing.
@@ -178,22 +193,22 @@ $isProcessWorker = false;
 @ $processMasterID = $options['processMasterID'];
 if($processMasterID == null) {
     $processMasterID = uniqid();
-    debug("Generated process master ID $processMasterID. (Master)\n");
+    debug("Generated process master ID $processMasterID. (Master)");
 } else {
-    debug("Got process master ID $processMasterID. (Worker)\n");
+    debug("Got process master ID $processMasterID. (Worker)");
 }
 
 // If the 'processes' option is set, we're going to operate as the controlling process.
 if(@ $options['processes']) {
 
     $processes = $options['processes'];
-    debug("Will run in multiprocessing mode. Processes: $processes\n");
+    debug("Will run in multiprocessing mode. Processes: $processes");
 
     // Sanity check
-    if($processes < 1 || $processes > 32) {
-        echo "ERROR: Can't have <1 or >32 processes. Try 4 or 8 to start.\n";
+    if($processes < 1 || $processes > 128) {
+        echo "ERROR: Can't have <1 or >128 processes. Try 32 to start.\n";
         displayHelp();
-        exit(4);
+        exit(5);
     }
 }
 
@@ -202,54 +217,53 @@ $processDir = "KISSCoast_wd_$processMasterID";
 if(@ $options['processID']) {
 
     $processID = $options['processID'];
-    debug("Will run as a worker process. Directory=$processDir. Process ID=$processID.\n");
+    debug("Will run as a worker process. Directory=$processDir. Process ID=$processID.");
     
     if(!is_dir($processDir)) {
         echo "ERROR: Process directory '$processDir' doesn't exist.\n";
-        exit(5);
+        exit(6);
     }
     
     if(!is_numeric($processID) || $processID < 0) {
         echo "ERROR: Process ID '$processID' is either non-numeric or negative.\n";
-        exit(6);
+        exit(7);
     }
     
     $isProcessWorker = true;
 
 }
     
-// If master, create a working directory for the processes
-if(!$isProcessWorker) {
+// If master and multiprocessing, create a working directory for the processes
+if(!$isProcessWorker && $processes > 1) {
 
-    debug("Creating working directory for processes in '$processDir'.\n");
+    debug("Creating working directory for processes in '$processDir'.");
     if(!mkdir($processDir)) {
-        echo "ERROR: Couldn't create working directory for processes.\n";
-        exit(6);
+        echo "ERROR: Couldn't create working directory for processes.";
+        exit(8);
     }
 
 }
 
+// What the workers will read from, and write to
 $workerInputFile = null;
 $workerOutputFile = null;
-
-
 
 // Read the input file.
 // KISSlicer outputs files with DOS-style line termination (CR+LF).
 if($isProcessWorker) {
-    debug("Reading process worker file.\n");
+    debug("Reading process worker file.");
     $workerInputFile = "$processDir/$processID.in";
     if(!$input = file($workerInputFile, FILE_IGNORE_NEW_LINES)) {
         echo "ERROR: Couldn't open process input file $workerInputFile.\n";
-        exit(7);
+        exit(9);
     }
 } else {
-    debug("Reading file.\n");
+    debug("Reading file.");
     if(!$input = file($options['file'], FILE_IGNORE_NEW_LINES)) {
-        echo "ERROR: Couldn't open input file ${options['file']}.\n";
-        exit(8);
+        echo "ERROR: Couldn't open input file ${options['file']}.";
+        exit(10);
     }
-    debug("Read input file ${options['file']}.\n");
+    debug("Read input file ${options['file']}.");
 }
 
 // Open output file.
@@ -258,19 +272,19 @@ if($isProcessWorker) {
     // This is just one worker process
     $workerOutputFile = "$processDir/$processID.out";
     $output = fopen($workerOutputFile, 'w');
-    debug("Opened thread worker output file at $workerOutputFile.\n");
+    debug("Opened thread worker output file at $workerOutputFile.");
 
 } else {
 
     // Either master, or single-processed
-    debug("Opened master output file at ");
+    debug("Opened master output file at ", false);
 
     if(array_key_exists("overwrite", $options)) {
         $output = fopen($options['file'], 'w');
-        debug($options['file'] . ".\n");
+        debug($options['file'] . ".");
     } else {
         $output = fopen($options['file'] . "_out", 'w');
-        debug($options['file'] . "_out.\n");
+        debug($options['file'] . "_out.");
     }
 
 }
@@ -293,6 +307,7 @@ if($isProcessWorker) {
     fwrite($output, ";          Timestamp: " . date("Y-m-d H:i:s", time()) . "\n");
     fwrite($output, ";              coast: ${options['coast']}\n");
     fwrite($output, ";   primePillarCoast: ${options['primePillarCoast']}\n");
+    fwrite($output, "; minExtrusionLength: ${options['minExtrusionLength']}\n");
 
 }
 
@@ -310,21 +325,21 @@ $stats = array(
 );
 
 // Iterate over input file
-debug("Input file has " . count($input) . " lines.\n");
+debug("Input file has " . count($input) . " lines.");
 
 if($isProcessWorker || $processes == 1) {
 
     if($isProcessWorker) {
-        debug("This is a thread worker.\n");
+        debug("This is a thread worker.");
     } else {
-        debug("This is a single-process instance.\n");
+        debug("This is the master, or a single-process instance.");
     }
 
     for($x=0; $x<count($input); $x++) {
 
         // Read current line
         $line = $input[$x];
-        debug("\nProcessing line $x: '$line' || ");
+        debug("\nProcessing line $x: '$line' || ", false);
 
         // Check empty line
         $lastLineEmpty = false;
@@ -333,13 +348,13 @@ if($isProcessWorker || $processes == 1) {
         } else {
             $lastLineEmpty = false;
         }
-        debug("lastLineEmpty: $lastLineEmpty ");
+        debug("lastLineEmpty: $lastLineEmpty ", false);
 
         // Check start of prime pillar
         if(strstr($line, $triggers['primePillar'])) {
             $isPrimePillar = true;
         }
-        debug("isPrimePillar: $isPrimePillar ");
+        debug("isPrimePillar: $isPrimePillar ", false);
 
         // Check for destring
         if(strstr($line, $triggers['destring'])) {
@@ -366,64 +381,131 @@ if($isProcessWorker || $processes == 1) {
                 $mmToCoast = $options['coast'];
             }
 
-            debug("\n \n/!\\ Found destring command. mm to coast: $mmToCoast\n");
+            debug("\n \n/!\\ Found destring command. mm to coast: $mmToCoast");
 
             $lengthFromPathEnd = 0;
+            $foundPathStart = false;
             $done = false;
-            
+
+            // 1st pass: Determine entire path length
             // One line back will be an empty comment, so start from two lines back
-            for($filePos = $x - 2; !$done && $x >= 0; $filePos--) {
+            for($filePos = $x - 2; !$foundPathStart && $filePos >= 0; $filePos--) {
+
+                // Determine current segment endpoints
+                $startXY = gcodeToXYZEF($input[$filePos - 1]);	// This may be changed a few lines down
+                $endXY = gcodeToXYZEF($input[$filePos]);
+
+                // Check for beginning of path
+                if($input[$filePos-1][0] == ";") {
+                    $foundPathStart = true;
+                    debug("- Found path start. Total path length = $lengthFromPathEnd.");
+                }
+
+                // Check for skipping over E-only move
+                if(!$startXY['motion']) {
+                    // 1st line after comment is the move to the origin of the path.
+                    // 2nd line may be an extruder-only move, e.g. to prime on toolchange.
+                    // That means we can have a line segment straddling an extruder-only move.
+                    // In this case, we simply go back one further.
+                    debug("! Skipping over extruder-only move.");
+                    $startXY = gcodeToXYZEF(@ $input[$filePos - 2]);	// We use @ because this could scan beyond beginning of file
+                }
+
+                // If we have a valid move, add its distance to the length accumulator
+                if($startXY['motion'] && $endXY['motion']) {
+                    $dist = distance2D($startXY, $endXY);
+                    $lengthFromPathEnd += $dist;
+                    debug("- Line segment: <${startXY['x']}, ${startXY['y']}> - <${endXY['x']}, ${endXY['y']}>, $dist mm long, total = $lengthFromPathEnd mm.");
+                }
+
+            }
+            
+            $pathLength = $lengthFromPathEnd;
+
+            // Length of whole path: $pathLength:
+            // mm to coast: $mmToCoast
+            // Min extrusion length: $options['minExtrusionLength']
+            
+            // If min extrusion length + mm to coast > path length, we have to push the coasting point
+            // further out until that's no longer the case.
+
+            $coastDistance = $mmToCoast;
+            
+            debug();
+            debug("Length of whole path: $pathLength");
+            debug("mm to coast: $mmToCoast");
+            debug("Min extrusion length: ${options['minExtrusionLength']}");
+            if($options['minExtrusionLength'] >= $pathLength) {
+
+                // Path length is less than minimum extrusion length, so we can't coast it at all
+                debug("Skip this one");
+                $spl = sprintf("%1.4f", $pathLength);
+                $input[$x - 2] .= " ; Path too short to coast ($spl mm)";
+                
+                $done = true;
+                if($isPrimePillar) {
+                    $stats['primeskipped']++;
+                } else {
+                    $stats['regskipped']++;
+                }
+
+            } else if($options['minExtrusionLength'] + $mmToCoast > $pathLength) {
+
+                // Path length is less than min extrusion length + coast length, so push coasting-point closer to end-of-path
+                $coastDistance = $pathLength - $options['minExtrusionLength'];
+                debug("Move coast point to $coastDistance mm before end-of-path");
+
+            }
+
+            // 2nd pass: Cut path at appropriate length to begin coasting & remove all E-commands after that point
+            // One line back will be an empty comment, so start from two lines back
+            $lengthFromPathEnd = 0;
+            for($filePos = $x - 2; !$done && $filePos >= 0; $filePos--) {
+
+                debug("In 2nd pass on line $filePos");
 
                 $startXY = gcodeToXYZEF($input[$filePos - 1]);
                 $endXY = gcodeToXYZEF($input[$filePos]);
-                
-                // If $startXY is false, we went back past the beginning of the path.
-                // That means that the path is too short to coast, and we're done.
-                if($startXY == false) {
-                    debug("This segment is too short to coast - skipping.\n");
-                    $done = true;
-                    if($isPrimePillar) {
-                        $stats['primeskipped']++;
-                    } else {
-                        $stats['regskipped']++;
-                    }
+                $dist = distance2D($startXY, $endXY);
+                $lengthFromPathEnd += $dist;
+                debug("- Line segment: <${startXY['x']}, ${startXY['y']}> - <${endXY['x']}, ${endXY['y']}>, $dist mm long, total = $lengthFromPathEnd mm.");
+
+                // Check for beginning of path
+                if($input[$filePos-1][0] == ";") {
+                    $foundPathStart = true;
+                    debug("- Found path start. Total path length = $lengthFromPathEnd.");
                 }
-                
+
                 if($done == false && $endXY != false) {	// We're not done, and have a valid line segment
-                    
-                    // Process current line segment
-                    $dist = distance2D($startXY, $endXY);
-                    $lengthFromPathEnd += $dist;
-                    debug("- Line segment: <${startXY['x']}, ${startXY['y']}> - <${endXY['x']}, ${endXY['y']}>, $dist mm long, total = $lengthFromPathEnd mm.\n");
 
-                    if($lengthFromPathEnd > $mmToCoast) {
+                    if($lengthFromPathEnd > $coastDistance && $foundPathStart) {
 
-                        debug("/!\\ Segment exceeds coast length. dist=$dist\n");
+                        debug("/!\\ Segment exceeds coast length. dist=$dist");
 
                         // Chop the segment into two, the first with extrusion and the second without.
-                        $splitDistFromStart = $lengthFromPathEnd - $mmToCoast;
-                        debug("! We will be splitting this line $splitDistFromStart mm from its starting point.\n");
+                        $splitDistFromStart = $lengthFromPathEnd - $coastDistance;
+                        debug("! We will be splitting this line $splitDistFromStart mm from its starting point.");
 
                         $xSlope = $endXY['x'] - $startXY['x'];
                         $ySlope = $endXY['y'] - $startXY['y'];
                         $distRatio = $splitDistFromStart / $dist;
-                        debug("! The distance ratio (desired distance / total) is $distRatio.\n");
+                        debug("! The distance ratio (desired distance / total) is $distRatio.");
                         
                         // Perform linear interpolation
                         $splitPoint = array(
                             'x' => (1-$distRatio) * $startXY['x'] + ($distRatio * $endXY['x']),
                             'y' => (1-$distRatio) * $startXY['y'] + ($distRatio * $endXY['y'])
                         );
-                        debug("splitPoint at <${splitPoint['x']}, ${splitPoint['y']}>\n");
-                        debug("The two lines involved in this segment are:\n");
-                        debug("\t" . $input[$filePos - 1] . "\n");
-                        debug("\t" . $input[$filePos] . "\n");
+                        debug("splitPoint at <${splitPoint['x']}, ${splitPoint['y']}>");
+                        debug("The two lines involved in this segment are:");
+                        debug("\t" . $input[$filePos - 1]);
+                        debug("\t" . $input[$filePos]);
                         
                         $seg1 = gcodeToXYZEF($input[$filePos - 1]);
                         $seg2 = gcodeToXYZEF($input[$filePos]);
-                        debug("\n");
-                        debug("Seg1: <${seg1['x']}, ${seg1['y']}>, E=${seg1['e']}, F=${seg1['f']}\n");
-                        debug("Seg2: <${seg2['x']}, ${seg2['y']}>, E=${seg2['e']}, F=${seg2['f']}\n");
+                        debug(" ");
+                        debug("Seg1: <${seg1['x']}, ${seg1['y']}>, E=${seg1['e']}, F=${seg1['f']}");
+                        debug("Seg2: <${seg2['x']}, ${seg2['y']}>, E=${seg2['e']}, F=${seg2['f']}");
                         
                         // Save feedrate
                         $feedrate = $seg2['f'];
@@ -431,15 +513,13 @@ if($isProcessWorker || $processes == 1) {
                         // Figure out how much to extrude
                         $eDist = ($seg2['e'] - $seg1['e']);
                         $splitE = $seg1['e'] + ($eDist * $distRatio);
-                        debug("eDist: $eDist / splitE: $splitE\n");
+                        debug("eDist: $eDist / splitE: $splitE");
                         
                         // Build the two new lines we'll insert, including Z coordinates if supplied
-                        //$nl1 = "G1 X${splitPoint['x']} Y${splitPoint['y']} E$splitE";
                         $nl1 = sprintf("G1 X%1.4f Y%1.4f E%1.4f", $splitPoint['x'], $splitPoint['y'], $splitE);
                         if($seg1['z'] != null) {
                             $nl1 .= " Z" . $seg1['z'];
                         }
-                        //$nl2 = "G1 X${endXY['x']} Y${endXY['y']}";
                         $nl2 = sprintf("G1 X%1.4f Y%1.4f", $endXY['x'], $endXY['y']);
                         if($seg2['z'] != null) {
                             $nl2 .= " Z" . $seg2['z'];
@@ -453,26 +533,26 @@ if($isProcessWorker || $processes == 1) {
 
                         // Make these points easier to find in the output
                         $nl1 .= " ; Calculated endpoint of extrusion";
-                        $nl2 .= " ; Begin coast ($mmToCoast mm)";
+                        $nl2 .= " ; Begin coast ($coastDistance mm)";
                         
-                        debug("\n");
-                        debug("New line 1: ${nl1}\n");
-                        debug("New line 2: ${nl2}\n");
+                        debug(" ");
+                        debug("New line 1: ${nl1}");
+                        debug("New line 2: ${nl2}");
 
                         // Replace existing line with 1st new line
                         $input[$filePos] = $nl1;
                         
                         // Insert the 2nd new line after the 1st, but only if it isn't too short
                         $nlDist = distance2D($splitPoint, $endXY);
-                        debug("!!! Distance between the two new lines is $nlDist.\n");
+                        debug("!!! Distance between the two new lines is $nlDist.");
 
                         if($nlDist > 0.01) {
                             array_splice($input, $filePos + 1, 0, $nl2);
                             $filePos++;	// Skip ahead one more (because we inserted a line) before stripping E moves
                             $x++;		// Increment input file pointer so we don't re-process the same line
                         } else {
-                            debug("!!! Skipping insertion of second line because the distance is less than 10 microns.\n");
-                            $input[$filePos + 1] .= " ; Skipping tiny segment and beginning coast ($mmToCoast mm)";
+                            debug("!!! Skipping insertion of second line because the distance is less than 10 microns.");
+                            $input[$filePos + 1] .= " ; Beginning coast at segment boundary ($coastDistance mm)";
                         }
 
                         // Update stats
@@ -484,12 +564,13 @@ if($isProcessWorker || $processes == 1) {
 
                         // Strip extruder moves from remaining lines in this path
                         for($y = $filePos + 1; $y < $x; $y++) {
-                            debug("- Stripping E-axis moves from line: '${input[$y]}'\n");
+                            debug("- Stripping E-axis moves from line: '${input[$y]}'");
                             $input[$y] = stripE($input[$y]);
-                            debug("                            Result: '${input[$y]}'\n");
+                            debug("                            Result: '${input[$y]}'");
                         }
 
-                        debug("\n/!\\ Done with this path.\n \n");
+                        debug("\n/!\\ Done with this path.");
+                        debug(" ");
                         $isPrimePillar = false;
                         $done = true;
 
@@ -508,11 +589,11 @@ if($isProcessWorker || $processes == 1) {
 if(!$isProcessWorker && $processes > 1) {
 
     // This is the master process, so we're going to parcel the file out in chunks.
-    debug("This is the master process.\n");
+    debug("This is the master process.");
 
     $nLines = count($input);
     $chunkSize = intval($nLines / $processes);
-    debug("Chunk size: $chunkSize\n");
+    debug("Chunk size: $chunkSize");
 
     // Make sure we don't get a destring command in the middle of a chunk boundary
     $chunkStart = $chunkEnd = 0;
@@ -520,7 +601,7 @@ if(!$isProcessWorker && $processes > 1) {
     for($x = 1; $x <= $processes; $x++) {
     
         $chunkEnd = intval($x * $chunkSize);
-        debug("Chunk $x starts at line $chunkStart\n");
+        debug("Chunk $x starts at line $chunkStart");
         
         // Scan until after we find a destring
         $done = false;
@@ -529,12 +610,12 @@ if(!$isProcessWorker && $processes > 1) {
 
             // Check for destring
             if(strstr($input[$y], $triggers['destring'])) {
-                debug("Found destring at line $y\n");
+                debug("Found destring at line $y");
                 $foundDestring = true;
             }
             
             if($foundDestring && trim($input[$y]) == ";") {
-                debug("Found terminal comment after destring at line $y. This is the chunk end.\n");
+                debug("Found terminal comment after destring at line $y. This is the chunk end.");
                 $chunkEnd = $y;
                 $done = true;
             }
@@ -543,17 +624,17 @@ if(!$isProcessWorker && $processes > 1) {
 
         // Still need to write the final chunk here.
         if($x == $processes) {
-            debug("Final process, writing to EOF.\n");
+            debug("Final process, writing to EOF.");
             $chunkEnd = $nLines - 1;	// Minus one because first key is 0, not 1.            
         }
         
-        debug("Chunk ends at $chunkEnd. Writing KISSCoast_wd_$processMasterID/$x.out.\n");
+        debug("Chunk ends at $chunkEnd. Writing KISSCoast_wd_$processMasterID/$x.out.");
         $chunkFileName = "$processDir/$x.in";
         if(!$chunkFile = fopen($chunkFileName, 'w')) {
             echo "ERROR: Couldn't open chunk file for writing.\n";
-            exit(10);
+            exit(11);
         }
-        debug("Writing lines from $chunkStart to $chunkEnd.\n");
+        debug("Writing lines from $chunkStart to $chunkEnd.");
         for($y = $chunkStart; $y <= $chunkEnd; $y++) {
             fwrite($chunkFile, $input[$y] . "\n");
         }
@@ -561,7 +642,7 @@ if(!$isProcessWorker && $processes > 1) {
         
         $chunkStart = $chunkEnd + 1;
         
-        debug("Writing complete. Opening process...\n");
+        debug("Writing complete. Opening process...");
 
         $descriptorSpec = array(
            0 => array("pipe", "r"),  // stdin is a pipe that the child will read from
@@ -572,8 +653,10 @@ if(!$isProcessWorker && $processes > 1) {
         $cwd = getcwd();
         $env = null; //array('some_option' => 'aeiou');
         $cmd = "./KISSCoast.php --coast=${options['coast']} --primePillarCoast=${options['primePillarCoast']} " .
+               "--minExtrusionLength=${options['minExtrusionLength']} " .
                "--processMasterID=$processMasterID --processID=$x";
-        debug("Worker $x cmd: $cmd\n \n");
+        debug("Worker $x cmd: $cmd");
+        debug();
 
         // Open the actual process
         $workerProcesses[$x]['proc'] = proc_open($cmd, $descriptorSpec, $pipes, $cwd, $env);
@@ -585,7 +668,7 @@ if(!$isProcessWorker && $processes > 1) {
     }
 
     // Wait for worker processes to finish
-    debug("Waiting for worker processes to finish...\n");
+    debug("Waiting for worker processes to finish...");
 	$done = false;
 	while(!$done) { 
 		$runningProcs = 0;
@@ -598,27 +681,29 @@ if(!$isProcessWorker && $processes > 1) {
                 if(!feof($workerProcesses[$x]['pipes'][1])) {
                     $runningProcs++;
 				} else {
-				    debug("Got FEOF from process $x.\n");
+				    debug("Got FEOF from process $x.");
 				    proc_close($workerProcesses[$x]['proc']);
 				}
 			}
 		}
 		if($runningProcs == 0) {
-		    debug("No running processes left!\n");
+		    debug("No running processes left!");
 		    $done = true;
 		}
 	}
 
 	// Coalesce output files into the input array
 	for($x = 1; $x <= $processes; $x++) {
-	    debug("Writing intermediate output to final output (#$x)\n");
+	    debug("Writing intermediate output to final output (#$x)");
 	    $input = file_get_contents("$processDir/$x.out");
 	    fwrite($output, $input);
 	    
 	    // Delete intermediate files
-	    unlink("$processDir/$x.in");
-	    unlink("$processDir/$x.out");
-	    unlink("$processDir/error-output-$x.txt");
+	    if(!$keepWorkDir) {
+    	    unlink("$processDir/$x.in");
+    	    unlink("$processDir/$x.out");
+    	    unlink("$processDir/error-output-$x.txt");
+        }
 	}
 
 } else {
@@ -639,7 +724,7 @@ if(!$isProcessWorker && $processes > 1) {
 //}
 
 // Coalesce worker process output and remove scratch files
-if($processes > 1) {
+if($processes > 1 && !$keepWorkDir) {
     if(!rmdir($processDir)) {
         echo "NOTICE: Unable to remove work directory '$processDir'.\n";
     }
@@ -648,6 +733,8 @@ if($processes > 1) {
 // Close output stream
 fclose($output);
 
-debug("\nDone.\n");
+debug();
+debug("Done.");
+debug();
 
 ?>
