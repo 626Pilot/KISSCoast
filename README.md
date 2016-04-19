@@ -32,10 +32,15 @@ If using Linux or Mac, you can do this to make the script execute by itself:
 In KISSlicer, go to Printer -> Firmware and enter the correct line for your OS. Replace x.xx and y.yy with the values you want.
 
 Linux / Mac:<br>
-`"/path/to/KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite --processes=32`
+`"/path/to/KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --minExtrusionLength=zz --file="<FILE>" --overwrite --processes=32`
 
 Windows:<br>
-`"C:\path\to\PHP\php" -q "C:\path\to\KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --file="<FILE>" --overwrite --processes=32`
+`"C:\path\to\PHP\php" -q "C:\path\to\KISSCoast.php" --coast=x.xx --primePillarCoast=y.yy --minExtrusionLength=zz --file="<FILE>" --overwrite --processes=32`
+
+You should try printing some small calibration pieces with different settings before trying anything large. Recommended starting values:
+- `coast`: 15
+- `primePillarCoast`: 60
+- `minExtrusionLength`: 10 (or more)
 
 On my 2012-era computer with four hyperthreaded cores (8 virtual), I got very good results (under 5 seconds) with `--processes=32`. You might be able to get it running faster with some different number. 32 seems to be a good starting point.
 
